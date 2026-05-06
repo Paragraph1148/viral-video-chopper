@@ -1,11 +1,12 @@
 require("dotenv").config(); // Load .env at the very top
 const fastify = require("fastify")({ logger: true });
 const path = require("path");
+const fs = require("fs");
 
 // Import the specialized modules
 const { getHeatmapSegments } = require("./engine/heatmap");
 const { getTranscript } = require("./engine/transcriber");
-const { identifyViralMoments } = require("./engine/processor");
+const { identifyViralMoments, generateBlog } = require("./engine/processor");
 const { cutClips } = require("./engine/cutter");
 const { downloadVideo } = require("./engine/downloader"); // We will create this tiny helper
 
@@ -50,10 +51,25 @@ fastify.post("/api/chop", async (request, reply) => {
         .send({ error: "Brain could not identify any viral moments." });
     }
 
-    // PHASE 4: The Cutter
+    // PHASE 4: Blog Generation (Repurposing)
+    // We use the transcript text and the video URL/metadata for context
+    let blogPost = null;
+    if (transcriptData.text) {
+      blogPost = await generateBlog(transcriptData.text, `Video URL: ${url}`);
+
+      // Save the blog post to the blogs/ directory
+      if (blogPost) {
+        const blogFileName = `blog_${Date.now()}.md`;
+        const blogPath = path.join(__dirname, "blogs", blogFileName);
+        fs.writeFileSync(blogPath, blogPost);
+        console.log(`[Repurposing] Blog post saved to: ${blogPath}`);
+      }
+    }
+
+    // PHASE 5: The Cutter
     const clips = await cutClips(videoPath, viralMoments);
 
-    // PHASE 5: Cleanup
+    // PHASE 6: Cleanup
     // Remove the large source video to save EC2 storage/costs
     try {
       const fs = require("fs");
@@ -66,15 +82,17 @@ fastify.post("/api/chop", async (request, reply) => {
     // SUCCESS RESPONSE
     return {
       success: true,
-      metadata: {
-        url,
-        clip_count: clips.length,
-        transcription_source: transcriptData.source,
+      message: `Successfully extracted ${clips.length} clips and generated a blog post.`,
+      data: {
+        clips: clips.map((p) => ({
+          local_path: p,
+          filename: path.basename(p),
+        })),
+        blog_post_available: !!blogPost,
+        blog_path: blogPost
+          ? path.join("blogs", `blog_${Date.now()}.md`)
+          : null,
       },
-      data: clips.map((p) => ({
-        local_path: p,
-        filename: path.basename(p),
-      })),
     };
   } catch (error) {
     fastify.log.error(error);
