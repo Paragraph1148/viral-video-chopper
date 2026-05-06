@@ -30,7 +30,7 @@ async function identifyViralMoments(heatmapSegments, transcriptData) {
   try {
     const chatCompletion = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
-      model: "llama3-70b-8192", // Using a powerful model for reasoning
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
       response_format: { type: "json_object" },
     });
 
