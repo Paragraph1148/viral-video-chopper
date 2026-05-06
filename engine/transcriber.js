@@ -40,9 +40,12 @@ async function getTranscript(videoPath, url) {
     const pythonScript = path.join(__dirname, "whisper_worker.py");
 
     // Run the Python script and capture stdout
-    const whisperOutput = execSync(`python3 ${pythonScript} "${videoPath}"`, {
-      encoding: "utf8",
-    });
+    const whisperOutput = execSync(
+      `/var/home/user/Projects/Ongoing/pixii-chopper/venv/bin/python ${pythonScript} "${videoPath}"`,
+      {
+        encoding: "utf8",
+      },
+    );
 
     const result = JSON.parse(whisperOutput);
 
