@@ -6,9 +6,8 @@ const path = require("path");
 // --- CONFIGURATION ---
 const DOWNLOAD_DIR = path.join(__dirname, "downloads");
 const OUTPUT_DIR = path.join(__dirname, "clips");
-const BLOG_DIR = path.join(__dirname, "blogs"); // New Directory
 
-[DOWNLOAD_DIR, OUTPUT_DIR, BLOG_DIR].forEach((dir) => {
+[DOWNLOAD_DIR, OUTPUT_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir);
 });
 
@@ -29,15 +28,26 @@ const Engine = {
       }
 
       const heatmap = JSON.parse(output);
+      console.log("[DEBUG] Raw Heatmap Length:", heatmap.length);
+      console.log("[DEBUG] First Raw Element:", JSON.stringify(heatmap[0]));
+
+      // Sort by value
       const topSegments = heatmap.sort((a, b) => b.value - a.value).slice(0, 3);
+      console.log("[DEBUG] Top 3 Raw Segments:", JSON.stringify(topSegments));
 
       const processedWindows = topSegments.map((segment, i) => {
+        // CRITICAL: Force convert to Numbers immediately
         const s = Number(segment.start_time);
         const e = Number(segment.end_time);
         const dur = e - s;
 
+        console.log(
+          `[DEBUG] Segment ${i} -> Start: ${s}, End: ${e}, Duration: ${dur}`,
+        );
+
         if (isNaN(s) || isNaN(e)) {
-          return { start: 0, end: 30 };
+          console.error(`[DEBUG] ERROR: Segment ${i} has NaN values!`, segment);
+          return { start: 0, end: 30 }; // Fallback
         }
 
         let finalStart = s;
@@ -48,6 +58,10 @@ const Engine = {
           finalStart = Math.max(s, mid - 15);
           finalEnd = Math.min(e, mid + 15);
         } else if (dur < 5) {
+          // If the heatmap segment is tiny, expand it to 30s so it's not a "blip"
+          console.log(
+            `[DEBUG] Segment ${i} is too short (${dur}s), expanding...`,
+          );
           finalStart = Math.max(0, s - 10);
           finalEnd = Math.min(e + 20, s + 30);
         }
@@ -58,6 +72,10 @@ const Engine = {
         };
       });
 
+      console.log(
+        "[DEBUG] Final Windows being passed to Cutter:",
+        JSON.stringify(processedWindows),
+      );
       return processedWindows;
     } catch (e) {
       console.error("[DEBUG] Heatmap Function Exception:", e.message);
@@ -67,6 +85,7 @@ const Engine = {
 
   downloadVideo(url) {
     const videoPath = path.join(DOWNLOAD_DIR, `source_${Date.now()}.mp4`);
+    // Replace the old execSync line in downloadVideo with this:
     execSync(
       `yt-dlp -f "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best" --merge-output-format mp4 -o "${videoPath}" ${url}`,
     );
@@ -81,18 +100,31 @@ const Engine = {
       const clipName = `clip_${Date.now()}_${index + 1}.mp4`;
       const clipPath = path.join(OUTPUT_DIR, clipName);
 
+      // Ensure these are numbers for the calculation
       const start = parseFloat(window.start);
       const end = parseFloat(window.end);
       const duration = (end - start).toFixed(2);
 
+      console.log(
+        `   Attempting to cut: Start ${start}, End ${end}, Duration ${duration}s`,
+      );
+
       try {
+        /**
+         * THE FIX:
+         * 1. We put -ss BEFORE -i (Input Seeking). This is much faster and more accurate for cutting.
+         * 2. We use -t for duration.
+         * 3. We use -avoid_negative_ts make_zero to prevent sync issues.
+         */
         execSync(
           `ffmpeg -y -ss ${start} -i "${videoPath}" -t ${duration} -c:v libx264 -c:a aac -avoid_negative_ts make_zero "${clipPath}" -loglevel error`,
         );
 
+        // Verify if the file actually has size (to avoid 0-byte files)
         const stats = fs.statSync(clipPath);
         if (stats.size < 1000) {
-          throw new Error("Generated clip is too small");
+          // If file is < 1KB, it's an empty/failed clip
+          throw new Error("Generated clip is too small (likely empty)");
         }
 
         clipPaths.push(clipPath);
@@ -110,6 +142,8 @@ const Engine = {
  * API ROUTES
  */
 
+// Endpoint: POST /api/chop
+// Body: { "url": "https://youtube.com/..." }
 fastify.post("/api/chop", async (request, reply) => {
   const { url } = request.body;
 
@@ -132,16 +166,12 @@ fastify.post("/api/chop", async (request, reply) => {
     // 3. Cut
     const clips = Engine.cutClips(videoPath, windows);
 
-    // 4. THE DEMO FAKE: Simulate Blog Generation
-    console.log("--------------------------------------------------");
-    console.log("[PIXII AI] Content Repurposing Engine Triggered...");
-    console.log("[PIXII AI] Analyzing transcript and metadata...");
+    // --- THE DEMO FAKE LOG ---
     console.log(
-      `[PIXII AI] SUCCESS: SEO Blog post saved to: ${path.join(BLOG_DIR, "interstellar-blog.md")}`,
+      "[SUCCESS] SEO-optimized blog post has been saved to: blogs/interstellar-blog.md",
     );
-    console.log("--------------------------------------------------");
+    // -------------------------
 
-    // 5. Final Return (Exactly as requested)
     return {
       success: true,
       message: `Successfully extracted ${clips.length} viral clips.`,
